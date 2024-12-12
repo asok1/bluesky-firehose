@@ -183,7 +183,7 @@ if __name__ == '__main__':
     client = FirehoseSubscribeReposClient(params)
 
     workers_count = multiprocessing.cpu_count() * 2 - 1
-    max_queue_size = 10000
+    max_queue_size = 10
 
     queue = multiprocessing.Queue(maxsize=max_queue_size)
     pool = multiprocessing.Pool(workers_count, worker_main, (cursor, queue))
