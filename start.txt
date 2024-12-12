@@ -1,0 +1,6 @@
+## START WITH OTEL INSTRUMENTATION LOCAL
+opentelemetry-instrument \
+    --traces_exporter console \
+    --metrics_exporter console \
+    --service_name bluesky-firehose-processor \
+    python3 sample.py
