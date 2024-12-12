@@ -9,11 +9,26 @@ from atproto import CAR, AtUri, FirehoseSubscribeReposClient, firehose_models, m
 
 import pymysql
 
+from atproto_firehose.exceptions import FirehoseError
+
+from opentelemetry import metrics, trace
+
+
+# Acquire a tracer
+tracer = trace.get_tracer("firehose.tracer")
+# Acquire a meter.
+meter = metrics.get_meter("firehose.meter")
+# Now create a counter instrument to make measurements with
+
+event_rate = meter.create_gauge(
+    "event.rate",
+    description="Number of inbound events per second",
+)
 mydb = pymysql.connect(
     host="localhost",
     user="root",
     password="amniotic-rake-music",
-    database="sample"
+    database="bluesky_firehose"
 )
 _INTERESTED_RECORDS = {
     models.ids.AppBskyFeedLike: models.AppBskyFeedLike,
@@ -27,13 +42,13 @@ def appendContentTable(timestamp, authorId, postContent, uri, cid):
         host='localhost',
         user='root',
         password="amniotic-rake-music",
-        database="sample"
+        database="bluesky_firehose"
     )
 
     cur = conn.cursor()
 
     # Select query
-    sql = "INSERT INTO `somestuff` (`timestamp_utc`, `author_id`, `post_content`, `uri`, `cid`) VALUES (%s, %s, %s, %s, %s)"
+    sql = "INSERT INTO `activity` (`timestamp_utc`, `author_id`, `post_content`, `uri`, `cid`) VALUES (%s, %s, %s, %s, %s)"
     cur.execute(sql, (timestamp, authorId, postContent[:255], uri, cid))
     conn.commit()
     # cur.execute("select * from `somestuff`")
@@ -121,6 +136,7 @@ def measure_events_per_second(func: callable) -> callable:
 
         if cur_time - wrapper.start_time >= 1:
             print(f'NETWORK LOAD: {wrapper.calls} events/second')
+            event_rate.set(wrapper.calls)
             wrapper.start_time = cur_time
             wrapper.calls = 0
 
@@ -179,4 +195,9 @@ if __name__ == '__main__':
 
         queue.put(message)
 
-    client.start(on_message_handler)
+    while True:
+        try:
+            client.start(on_message_handler)
+        except FirehoseError:
+            a = 1+1
+            print(f'RUNTIME ERROR %s', "what is happening oof")
