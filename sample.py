@@ -7,12 +7,21 @@ from typing import Any
 
 from atproto import CAR, AtUri, FirehoseSubscribeReposClient, firehose_models, models, parse_subscribe_repos_message
 
-import pymysql
+import clickhouse_connect
+import uuid
 
 from atproto_firehose.exceptions import FirehoseError
 
 from opentelemetry import metrics, trace
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv("config.env")
+HOST = os.getenv('host')
+USER = os.getenv('user')
+PWD = os.getenv('password')
+IS_SECURE = os.getenv('secure')
 
 # Acquire a tracer
 tracer = trace.get_tracer("firehose.tracer")
@@ -24,41 +33,35 @@ event_rate = meter.create_gauge(
     "event.rate",
     description="Number of inbound events per second",
 )
-mydb = pymysql.connect(
-    host="localhost",
-    user="root",
-    password="amniotic-rake-music",
-    database="bluesky_firehose"
-)
+
 _INTERESTED_RECORDS = {
     models.ids.AppBskyFeedLike: models.AppBskyFeedLike,
     models.ids.AppBskyFeedPost: models.AppBskyFeedPost,
     models.ids.AppBskyGraphFollow: models.AppBskyGraphFollow,
 }
 
-def appendContentTable(timestamp, authorId, postContent, uri, cid):
-    # To connect MySQL database
-    conn = pymysql.connect(
-        host='localhost',
-        user='root',
-        password="amniotic-rake-music",
-        database="bluesky_firehose"
+def appendContentTable_Clickhouse(timestamp, authorId, postContent, uri, cid):
+    client = clickhouse_connect.get_client(
+        host=HOST,
+        user=USER,
+        password=PWD,
+        secure=IS_SECURE
+    )
+    # Sample data to insert
+    data = [
+        (str(uuid.uuid4()),timestamp, authorId, postContent, uri, cid),
+    ]
+
+
+    # Send data to ClickHouse
+    client.insert(
+        table='activity',    # Name of the table
+        data=data,            # Data to insert as a list of tuples
+        settings={'async_insert': 1, 'wait_for_async_insert': 1}
     )
 
-    cur = conn.cursor()
+    client.close()
 
-    # Select query
-    sql = "INSERT INTO `activity` (`timestamp_utc`, `author_id`, `post_content`, `uri`, `cid`) VALUES (%s, %s, %s, %s, %s)"
-    cur.execute(sql, (timestamp, authorId, postContent[:255], uri, cid))
-    conn.commit()
-    # cur.execute("select * from `somestuff`")
-    output = cur.fetchall()
-
-    for i in output:
-        print(i)
-
-        # To close the connection
-    conn.close()
 
 def _get_ops_by_type(commit: models.ComAtprotoSyncSubscribeRepos.Commit) -> defaultdict:
     operation_by_type = defaultdict(lambda: {'created': [], 'deleted': []})
@@ -119,9 +122,8 @@ def worker_main(cursor_value: multiprocessing.Value, pool_queue: multiprocessing
             cid = created_post['cid']
 
             inlined_text = record.text.replace('\n', ' ')
-            print(f'NEW POST [CREATED_AT={record.created_at}][AUTHOR={author}]: {inlined_text}')
             print(f'full post data: {created_post}')
-            appendContentTable(record.created_at, author, inlined_text, uri, cid)
+            appendContentTable_Clickhouse(record.created_at, author, inlined_text, uri, cid)
 
 
 
